@@ -1,0 +1,272 @@
+plugins {
+    id 'base'
+    id 'org.m2ci.msp.praat-wrapper' version '0.5.1'
+}
+
+def n_epochs = 10
+def phone_set_path = "src/OALD.json"
+
+task resample(type: PyExec){
+    srcFiles = [file("src/wav")]
+    destDirs = file("$buildDir/01_resampled_wav")
+    pyFile = file("scripts/01_resample.py")
+    args += srcFiles + [destDirs]
+}
+/*
+task fix_textgrids(type: PyExec){
+    srcFiles = [file("src/xml"), file("src/textgrid")]
+    destDirs = file("$buildDir/02_fixed_textgrids")
+    pyFile = file("scripts/02_fix_textgrids.py")
+    args += srcFiles + [destDirs]
+}
+*/
+task split_test_train_valid(type: PyExec){
+    dependsOn resample
+    srcFiles = [file("src/txt"), file("$buildDir/01_resampled_wav"), file("src/textgrid")]
+    destDirs = file("$buildDir/03_split_test_train_valid")
+    pyFile = file("scripts/03_split_test_train_valid.py")
+    args += srcFiles + [destDirs]
+}
+
+task augment_data(type: PyExec){
+    dependsOn split_test_train_valid
+    srcFiles = [file("src/txt"), file("src/textgrid"), file("$buildDir/01_resampled_wav"), file("$buildDir/03_split_test_train_valid")]
+    destDirs = [file("$buildDir/06_wav"), file("$buildDir/05_txt"), file("$buildDir/04_textgrid")]
+    pyFile = file("scripts/04_augment_data.py")
+    args += srcFiles + destDirs
+}
+
+task extract_f0(type: PyExec) {
+    dependsOn  praat, augment_data
+    srcFiles = file("$buildDir/06_wav")
+    destDirs = file("$buildDir/07_f0")
+    pyFile = file("scripts/06_extract_f0_praat.py")
+    def praatFile = file("scripts/05_praat_script.praat")
+    inputs.files praatFile
+    args += [srcFiles, destDirs, praat.binary, praatFile]
+}
+
+task syllabify(type: PyExec){
+    dependsOn augment_data
+    srcFiles = [file("$buildDir/04_textgrid"), file(phone_set_path)]
+    destDirs = file("$buildDir/08_textgrid_syllables")
+    pyFile = file("scripts/07_syllabify.py")
+    args += srcFiles + [destDirs]
+}
+
+task add_onset_rhymes(type: PyExec){
+    dependsOn syllabify
+    srcFiles = [file("$buildDir/08_textgrid_syllables")]
+    destDirs = file("$buildDir/09_textgrid_onsets_rhymes")
+    pyFile = file("scripts/08_add_onsets_rhymes.py")
+    args += srcFiles + [destDirs]
+}
+
+task add_pos(type: PyExec){
+    dependsOn add_onset_rhymes
+    srcFiles = [file("$buildDir/09_textgrid_onsets_rhymes"), file("$buildDir/05_txt")]
+    destDirs = file("$buildDir/10_textgrid_pos")
+    pyFile = file("scripts/09_add_POS.py")
+    args += srcFiles + [destDirs]
+}
+
+task add_lemmas(type: PyExec){
+    dependsOn add_pos
+    srcFiles = [file("$buildDir/10_textgrid_pos")]
+    destDirs = file("$buildDir/11_textgrid_lemmas")
+    pyFile = file("scripts/10_add_lemmas.py")
+    args += srcFiles + [destDirs]
+}
+
+task add_punctuation(type: PyExec){
+    dependsOn add_lemmas
+    srcFiles = [file("$buildDir/11_textgrid_lemmas"), file("$buildDir/05_txt")]
+    destDirs = file("$buildDir/12_textgrid_punctuation")
+    pyFile = file("scripts/11_add_punctuation.py")
+    args += srcFiles + [destDirs]
+}
+
+task add_silences(type: PyExec){
+    dependsOn add_punctuation
+    srcFiles = [file("$buildDir/12_textgrid_punctuation")]
+    destDirs = file("$buildDir/13_textgrid_silences")
+    pyFile = file("scripts/12_add_silences.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_f0_timepoints(type: PyExec){
+    dependsOn add_silences
+    srcFiles = [file("$buildDir/13_textgrid_silences")]
+    destDirs = file("$buildDir/14_f0_timepoints")
+    pyFile = file("scripts/13_extract_f0_timepoints.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_linguistic_labels(type: PyExec){
+    dependsOn add_silences, extract_f0_timepoints
+    srcFiles = [file("$buildDir/14_f0_timepoints"), file("$buildDir/13_textgrid_silences")]
+    destDirs = file("$buildDir/15_linguistic_labels")
+    pyFile = file("scripts/14_extract_linguistic_labels.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_f0_labels(type: PyExec){
+    dependsOn extract_f0, extract_f0_timepoints
+    srcFiles = [file("$buildDir/07_f0"), file("$buildDir/14_f0_timepoints")]
+    destDirs = file("$buildDir/16_f0_labels")
+    pyFile = file("scripts/15_extract_f0_labels.py")
+    args += srcFiles + [destDirs]
+}
+
+task merge_labels(type: PyExec){
+    dependsOn extract_linguistic_labels, extract_f0_labels
+    srcFiles = [file("$buildDir/15_linguistic_labels"), file("$buildDir/16_f0_labels")]
+    destDirs = file("$buildDir/17_merged_labels")
+    pyFile = file("scripts/16_merge_labels.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_fixed_dictionaries(type: PyExec){
+    destDirs = file("$buildDir/18_NN_dictionaries")
+    pyFile = file("scripts/17_extract_fixed_dictionaries.py")
+    args += [destDirs]
+}
+
+task extract_lemmas_dictionary(type: PyExec){
+    dependsOn add_silences, split_test_train_valid
+    srcFiles = [file("$buildDir/13_textgrid_silences"), file("src/wordlist.txt"), file("$buildDir/03_split_test_train_valid")]
+    destDirs = file("$buildDir/18_NN_dictionaries")
+    pyFile = file("scripts/18_extract_lemmas_dictionary.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_pos_dictionary(type: PyExec){
+    dependsOn add_silences, split_test_train_valid
+    srcFiles = [file("$buildDir/13_textgrid_silences"), file("$buildDir/03_split_test_train_valid")]
+    destDirs = file("$buildDir/18_NN_dictionaries")
+    pyFile = file("scripts/19_extract_pos_dictionary.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_punct_dictionary(type: PyExec){
+    dependsOn add_silences, split_test_train_valid
+    srcFiles = [file("$buildDir/13_textgrid_silences"), file("$buildDir/03_split_test_train_valid")]
+    destDirs = file("$buildDir/18_NN_dictionaries")
+    pyFile = file("scripts/20_extract_punctuation_dictionary.py")
+    args += srcFiles + [destDirs]
+}
+
+task extract_f0_labels_dictionary(type: PyExec){
+    dependsOn extract_f0_labels
+    srcFiles = [file("$buildDir/16_f0_labels")]
+    destDirs = file("$buildDir/18_NN_dictionaries")
+    pyFile = file("scripts/21_extract_f0_labels_dictionary.py")
+    args += srcFiles + [destDirs]
+}
+
+
+task merge_train_dictionaries(type: PyExec){
+    dependsOn extract_fixed_dictionaries, extract_lemmas_dictionary, extract_pos_dictionary, extract_punct_dictionary, extract_f0_labels_dictionary
+    srcFiles = [file("$buildDir/18_NN_dictionaries")]
+    destDirs = file("$buildDir/20_merged_dictionaries")
+    pyFile = file("scripts/22_merge_train_dictionaries.py")
+    args += srcFiles + [destDirs]
+}
+
+task train_test_valid_label_batches(type: PyExec){
+    dependsOn merge_labels, split_test_train_valid
+    srcFiles = [file("$buildDir/17_merged_labels"), file("$buildDir/03_split_test_train_valid")]
+    destDirs = [file("$buildDir/21_train_labels"), file("$buildDir/22_test_labels"), file("$buildDir/23_valid_labels")]
+    pyFile = file("scripts/23_train_test_valid_label_batches.py")
+    args += srcFiles + destDirs
+}
+
+task train_test_valid_hot_vectors(type: PyExec){
+    dependsOn train_test_valid_label_batches, merge_train_dictionaries
+    srcFiles = [file("$buildDir/20_merged_dictionaries"), file("$buildDir/21_train_labels"), file("$buildDir/22_test_labels"), file("$buildDir/23_valid_labels")]
+    destDirs = [file("$buildDir/24_train_batches"), file("$buildDir/25_test_batches"), file("$buildDir/26_valid_batches")]
+    pyFile = file("scripts/24_train_test_valid_hot_vectors.py")
+    args += srcFiles + destDirs
+}
+
+task train_model(type: PyExec){
+    dependsOn train_test_valid_hot_vectors
+    srcFiles = [file("$buildDir/24_train_batches"), n_epochs.toString()]
+    destDirs = [file("$buildDir/27_RNN_outputs"), file("$buildDir/28_frozen_models")]
+    pyFile = file("scripts/25_train_neural_network.py")
+    args += srcFiles + destDirs
+}
+
+def task_list = []
+(1..n_epochs).each  { counter ->
+
+    def current_task = task "run_validation_${counter}"(){
+
+        task "extract_dense_word_vectors_${counter}"(type: PyExec){
+            dependsOn train_model
+            srcFiles = [file("$buildDir/28_frozen_models"), file("$buildDir/18_NN_dictionaries"), counter.toString()]
+            destDirs = [file("$buildDir/18_NN_dictionaries")]
+            pyFile = file("scripts/26_extract_dense_word_vectors.py")
+            args += srcFiles + destDirs
+        }
+
+        task "merge_inference_dictionaries_${counter}"(type: PyExec){
+            dependsOn "extract_dense_word_vectors_${counter}"
+            srcFiles = [file("$buildDir/18_NN_dictionaries")]
+            destDirs = [file("$buildDir/20_merged_dictionaries")]
+            pyFile = file("scripts/27_merge_inference_dictionaries.py")
+            args += srcFiles + destDirs
+        }
+
+        task "inference_label_batches_${counter}"(type: PyExec){
+            dependsOn "merge_inference_dictionaries_${counter}"
+            srcFiles = [file("$buildDir/15_linguistic_labels"), file("$buildDir/03_split_test_train_valid")]
+            destDirs = [file("$buildDir/29_inference_labels")]
+            pyFile = file("scripts/28_inference_label_batches.py")
+            args += srcFiles + destDirs
+        }
+
+        task "inference_hot_vectors_${counter}"(type: PyExec){
+            dependsOn "inference_label_batches_${counter}"
+            srcFiles = [file("$buildDir/20_merged_dictionaries"), file("$buildDir/29_inference_labels")]
+            destDirs = [file("$buildDir/30_inference_batches")]
+            pyFile = file("scripts/29_inference_hot_vectors.py")
+            args += srcFiles + destDirs
+        }
+
+        task "predict_f0_steps_${counter}"(type: PyExec){
+            dependsOn "inference_hot_vectors_${counter}"
+            srcFiles = [file("$buildDir/28_frozen_models"), counter.toString(), file("$buildDir/30_inference_batches"), file("$buildDir/18_NN_dictionaries")]
+            destDirs = [file("$buildDir/31_predicted_f0_steps")]
+            pyFile = file("scripts/30_predict_f0_steps.py")
+            args += srcFiles + destDirs
+        }
+
+        task "convert_to_hertz_${counter}"(type: PyExec){
+            dependsOn "predict_f0_steps_${counter}"
+            srcFiles = [file("$buildDir/14_f0_timepoints"), file("$buildDir/31_predicted_f0_steps")]
+            destDirs = [file("$buildDir/32_synth_f0s")]
+            pyFile = file("scripts/31_convert_steps_to_hertz.py")
+            args += srcFiles + destDirs
+        }
+
+        task "synthesize_wav_${counter}"(type: PyExec){
+            dependsOn "convert_to_hertz_${counter}"
+            srcFiles = [file("$buildDir/32_synth_f0s"), file("$buildDir/01_resampled_wav"), counter.toString()]
+            destDirs = [file("$buildDir/33_synth_wav")]
+            pyFile = file("scripts/32_synthesize_wav.py")
+            args += srcFiles + destDirs
+        }
+    }
+
+    current_task.dependsOn "synthesize_wav_${counter}"
+    task_list.add(current_task)
+}
+
+def reversed_task_list = task_list.reverse()
+(0..reversed_task_list.size()-2).each{i ->
+    def next_task = reversed_task_list[i]
+    def prev_task = reversed_task_list[i+1]
+    next_task.dependsOn prev_task
+}
+
