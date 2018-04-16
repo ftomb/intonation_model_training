@@ -3,7 +3,7 @@ plugins {
     id 'org.m2ci.msp.praat-wrapper' version '0.5.1'
 }
 
-def n_epochs = 10
+def n_epochs = 20
 def phone_set_path = "src/OALD.json"
 
 task resample(type: PyExec){
